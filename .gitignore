@@ -1,0 +1,40 @@
+# Sensitive files
+*.log
+.env
+.claude.json*
+
+# Snowflake credentials
+secrets/
+
+# Data files
+*.parquet
+*.csv
+data/
+
+# Docker volumes
+scheduler_data/.cache/
+scheduler_data/.file_versions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+~*
+.~*

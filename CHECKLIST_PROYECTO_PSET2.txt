@@ -1,0 +1,235 @@
+# CHECKLIST PROYECTO PSET2 - NYC TAXI DATA PIPELINE
+# USFQ Data Mining - Fecha: 2025-09-28
+# Estado del Análisis: Basado en archivos existentes del 27/09/2025
+
+===============================================================================
+## RESUMEN DEL PROYECTO
+===============================================================================
+Construir un data pipeline que ingesta TODOS los archivos Parquet de 2015–2025
+del dataset NYC TLC Trip Record Data (Yellow y Green), aterriza en Snowflake
+con arquitectura de medallas (bronze/silver/gold) usando Mage + dbt.
+
+===============================================================================
+## ESTADO GENERAL: SETUP BÁSICO COMPLETADO - INGESTA PENDIENTE
+===============================================================================
+
+===============================================================================
+## 1. INFRAESTRUCTURA Y SETUP (COMPLETADO ✅)
+===============================================================================
+
+✅ [COMPLETADO] Docker Compose configurado
+   - Archivo: docker-compose.yml existe
+   - Contenedor Mage en puerto 6789
+   - Volumen mapeado: ./scheduler_data:/home/src
+
+✅ [COMPLETADO] Estructura de directorios creada
+   - scheduler_data/ con proyecto Mage
+   - dbt_nyc_taxi/ con proyecto dbt completo
+   - Archivos de configuración principales
+
+✅ [COMPLETADO] Configuración básica de seguridad definida
+   - Variables de entorno identificadas (SNOWFLAKE_*)
+   - Script de test de conexión: test_snowflake_connection.py
+   - Configuración de secrets preparada
+
+===============================================================================
+## 2. INGESTA DE DATOS (PARCIALMENTE COMPLETADO ⚠️)
+===============================================================================
+
+✅ [COMPLETADO] Data loader implementado
+   - Archivo: scheduler_data/scheduler/data_loaders/ingest_taxi.py
+   - Funcionalidad: Carga paralela de archivos Parquet
+   - Parámetros: year, month, service_type, max_workers
+   - Validaciones básicas y manejo de errores
+
+⚠️ [DESCONOCIDO] Pipeline de backfill mensual
+   - Archivo: scheduler_data/scheduler/pipelines/taxi_zones/metadata.yaml existe
+   - ⚠️ NO SE SABE: Si está configurado para 2015-2025 completo
+   - ⚠️ NO SE SABE: Si implementa idempotencia
+   - ⚠️ NO SE SABE: Si tiene chunking mensual efectivo
+
+❌ [PENDIENTE] Matriz de cobertura 2015-2025
+   - ❌ NO EXISTE: Tabla/archivo de cobertura por mes y servicio
+   - ❌ NO DOCUMENTADO: Qué meses están disponibles vs faltantes
+   - ❌ REQUERIDO: Matriz Yellow/Green por mes con estado de carga
+
+❌ [PENDIENTE] Metadatos de ingesta por lote
+   - ❌ REQUERIDO: run_id, fechas, tamaño/archivos por lote
+   - ❌ REQUERIDO: Tabla de auditoría con resultados de carga
+
+❌ [PENDIENTE] Validaciones de cobertura
+   - ❌ REQUERIDO: Conteos por mes y servicio
+   - ❌ REQUERIDO: Verificación de disponibilidad de archivos Parquet
+
+===============================================================================
+## 3. ARQUITECTURA DE MEDALLAS (SETUP COMPLETADO - EJECUCIÓN PENDIENTE)
+===============================================================================
+
+✅ [COMPLETADO] Bronze/Raw layer configurado
+   - Esquema: raw en dbt_project.yml
+   - Sources definidos: scheduler_data/dbt_nyc_taxi/models/raw/sources.yml
+
+✅ [COMPLETADO] Silver layer configurado
+   - Archivo: scheduler_data/dbt_nyc_taxi/models/silver/stg_trips_unified.sql
+   - Funcionalidad: Unifica Yellow/Green + limpieza básica
+
+✅ [COMPLETADO] Gold layer configurado
+   - Modelo en estrella implementado:
+     * fct_trips.sql (hechos con clustering)
+     * dim_date.sql (calendario 2015-2025)
+     * dim_zone.sql (zonas de taxi)
+     * dim_payment_type.sql
+     * dim_rate_code.sql
+
+⚠️ [DESCONOCIDO] Estado de ejecución dbt
+   - ⚠️ NO SE SABE: Si las transformaciones se han ejecutado
+   - ⚠️ NO SE SABE: Si hay datos en Bronze/Silver/Gold
+   - ⚠️ NO SE SABE: Si pipeline dbt funciona end-to-end
+
+===============================================================================
+## 4. CLUSTERING EN SNOWFLAKE (CONFIGURADO - EJECUCIÓN PENDIENTE)
+===============================================================================
+
+✅ [COMPLETADO] Configuración de clustering definida
+   - Tabla objetivo: fct_trips
+   - Cluster keys planificados: pickup_date_sk, service_type
+
+❌ [PENDIENTE] Implementación y medición
+   - ❌ REQUERIDO: Aplicar clustering en fct_trips
+   - ❌ REQUERIDO: Query Profile antes/después
+   - ❌ REQUERIDO: Análisis de pruning de micro-partitions
+   - ❌ REQUERIDO: Comparación de métricas de performance
+
+===============================================================================
+## 5. SEGURIDAD Y OPERACIÓN (CONFIGURADO - IMPLEMENTACIÓN PENDIENTE)
+===============================================================================
+
+✅ [COMPLETADO] Secrets configurados conceptualmente
+   - Variables identificadas: SNOWFLAKE_ACCOUNT, USER, PASSWORD, etc.
+   - Estructura preparada en código
+
+❌ [PENDIENTE] Implementación real de secrets
+   - ❌ REQUERIDO: Configurar secrets en Mage (localhost:6789)
+   - ❌ REQUERIDO: Crear cuenta de servicio en Snowflake
+   - ❌ REQUERIDO: Configurar permisos mínimos
+   - ❌ REQUERIDO: Validar conexión efectiva
+
+❌ [PENDIENTE] Evidencias de seguridad
+   - ❌ REQUERIDO: Capturas de secrets/roles (valores ocultos)
+   - ❌ REQUERIDO: Resumen de privilegios documentado
+
+===============================================================================
+## 6. CALIDAD Y DOCUMENTACIÓN (SETUP BÁSICO - IMPLEMENTACIÓN PENDIENTE)
+===============================================================================
+
+❌ [PENDIENTE] Tests dbt
+   - ❌ REQUERIDO: Tests de unicidad en llaves primarias
+   - ❌ REQUERIDO: not_null en campos críticos
+   - ❌ REQUERIDO: accepted_values para enums
+   - ❌ REQUERIDO: relationships entre fact/dimensions
+
+❌ [PENDIENTE] Diccionario de datos
+   - ❌ REQUERIDO: Descripción de columnas finales en gold
+   - ❌ REQUERIDO: Lineage de datos documentado
+
+❌ [PENDIENTE] Auditoría de cargas
+   - ❌ REQUERIDO: Tabla/reporte con conteos por mes/servicio
+   - ❌ REQUERIDO: % de filas descartadas por reglas de calidad
+
+===============================================================================
+## 7. ENTREGABLES (PARCIALMENTE COMPLETADO)
+===============================================================================
+
+⚠️ [INCOMPLETO] README completo
+   - ⚠️ EXISTE: SETUP_LOG.md con información básica
+   - ❌ FALTA: Matriz de cobertura 2015-2025
+   - ❌ FALTA: Estrategia de backfill documentada
+   - ❌ FALTA: Resultados de clustering
+   - ❌ FALTA: Troubleshooting
+
+✅ [COMPLETADO] Docker Compose
+   - Archivo existe y funcional
+
+✅ [COMPLETADO] Proyecto Mage versionado
+   - Pipelines básicos implementados
+
+✅ [COMPLETADO] Proyecto dbt con capas bronze/silver/gold
+   - Estructura completa implementada
+
+❌ [PENDIENTE] Evidencias (capturas)
+   - ❌ REQUERIDO: Secrets/roles configurados
+   - ❌ REQUERIDO: Matriz de cobertura
+   - ❌ REQUERIDO: Ejecuciones en Mage
+   - ❌ REQUERIDO: Lineage dbt
+   - ❌ REQUERIDO: Query Profiles de clustering
+
+❌ [PENDIENTE] Notebook de análisis
+   - ❌ REQUERIDO: data_analysis.ipynb
+   - ❌ REQUERIDO: 5 preguntas de negocio sobre gold layer
+
+===============================================================================
+## 8. PREGUNTAS DE NEGOCIO (NO INICIADO)
+===============================================================================
+
+❌ [PENDIENTE] Las 5 preguntas obligatorias desde gold layer:
+   1. ❌ ¿Cuáles son las 10 zonas con más viajes por mes? (PU y DO separado)
+   2. ❌ ¿Cómo varían ingresos totales y tip % por borough y mes?
+   3. ❌ Promedio mph por franja horaria y borough (diurno vs nocturno)
+   4. ❌ Percentiles (p50/p90) de duración por PULocationID
+   5. ❌ Distribución de viajes por día de semana y hora (horas pico)
+
+===============================================================================
+## CHECKLIST DE ACEPTACIÓN (del PDF) - ESTADO ACTUAL
+===============================================================================
+
+❌ Cargados todos los meses 2015–2025 (Parquet) de Yellow y Green; matriz de cobertura en README
+❌ Mage orquesta backfill mensual con idempotencia y metadatos por lote
+⚠️ Bronze (raw) refleja fielmente el origen; Silver unifica/escaliza; Gold en estrella con fct_trips y dimensiones clave (CONFIGURADO, NO EJECUTADO)
+❌ Clustering aplicado a fct_trips con evidencia antes/después (Query Profile, pruning)
+❌ Secrets y cuenta de servicio con permisos mínimos (evidencias sin exponer valores)
+❌ Tests dbt (not_null, unique, accepted_values, relationships) pasan; docs y lineage generados
+❌ Notebook con respuestas a las 5 preguntas de negocio desde gold
+
+===============================================================================
+## PRÓXIMOS PASOS CRÍTICOS (ORDEN DE PRIORIDAD)
+===============================================================================
+
+1. 🔥 URGENTE: Configurar secrets en Mage y validar conexión Snowflake
+2. 🔥 URGENTE: Ejecutar pipeline completo para al menos 1 mes de prueba
+3. 🔥 URGENTE: Crear matriz de cobertura 2015-2025 real
+4. 📊 CRÍTICO: Implementar backfill masivo con idempotencia
+5. 📊 CRÍTICO: Ejecutar y validar transformaciones dbt (Bronze→Silver→Gold)
+6. 🎯 IMPORTANTE: Aplicar clustering y medir performance
+7. 📝 IMPORTANTE: Implementar tests dbt completos
+8. 📊 FINAL: Crear notebook con las 5 preguntas de negocio
+
+===============================================================================
+## DIAGNÓSTICO: ¿POR QUÉ FALLÓ EL COMANDO ANTERIOR?
+===============================================================================
+
+El error que experimentaste probablemente se debe a:
+
+1. ❌ SECRETS NO CONFIGURADOS: Las variables SNOWFLAKE_* no están en Mage
+2. ❌ CONEXIÓN NO VALIDADA: No se ha probado la conexión real a Snowflake
+3. ❌ PIPELINE INCOMPLETO: El pipeline puede tener configuración parcial
+4. ❌ DATOS NO CARGADOS: Probablemente no hay datos en Bronze para procesar
+
+===============================================================================
+## RECOMENDACIÓN INMEDIATA
+===============================================================================
+
+1. Acceder a http://localhost:6789 (Mage UI)
+2. Configurar secrets de Snowflake en Settings
+3. Ejecutar test_snowflake_connection.py para validar
+4. Probar carga de 1 mes específico antes del backfill masivo
+5. Validar que el pipeline end-to-end funciona con datos pequeños
+
+===============================================================================
+## ESTADO RESUMIDO
+===============================================================================
+✅ SETUP ARQUITECTURAL: 85% COMPLETADO
+⚠️ EJECUCIÓN E IMPLEMENTACIÓN: 15% COMPLETADO
+❌ DATOS Y VALIDACIONES: 5% COMPLETADO
+❌ ANÁLISIS DE NEGOCIO: 0% COMPLETADO
+
+VEREDICTO: Tienes una base sólida pero necesitas ejecutar e implementar todo.

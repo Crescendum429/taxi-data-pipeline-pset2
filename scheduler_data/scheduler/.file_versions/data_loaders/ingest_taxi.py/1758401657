@@ -1,0 +1,163 @@
+import pandas as pd
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+import logging
+from typing import List, Dict, Tuple
+import time
+
+if 'data_loader' not in globals():
+    from mage_ai.data_preparation.decorators import data_loader
+if 'test' not in globals():
+    from mage_ai.data_preparation.decorators import test
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@data_loader
+def load_nyc_taxi_data(*args, **kwargs):
+    """
+    Load NYC Taxi data with parallel processing and chunking
+    
+    Parameters from kwargs:
+    - year: Target year (2015-2025)
+    - month: Target month (1-12) 
+    - service_type: 'yellow' or 'green'
+    - max_workers: Number of parallel threads (default: 4)
+    - chunk_months: Number of months to process in this batch (default: 1)
+    """
+
+    # Get parameters
+    year = kwargs.get('year', 2024)
+    month = kwargs.get('month', 1)
+    service_type = kwargs.get('service_type', 'yellow')
+    max_workers = kwargs.get('max_workers', 4)
+    chunk_months = kwargs.get('chunk_months', 1)
+
+    # Generate URL list for the chunk
+    urls_to_process = generate_url_list(year, month, service_type, chunk_months)
+
+    logger.info(f"Processing {len(urls_to_process)} files for {service_type} taxi data")
+    logger.info(f"Using {max_workers} parallel workers")
+
+    # Process files in parallel
+    all_dataframes = []
+    successful_downloads = []
+    failed_downloads = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all download tasks
+        future_to_url = {
+            executor.submit(download_and_process_file, url, idx): url
+            for idx, url in enumerate(urls_to_process)
+        }
+
+        # Collect results as they complete
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                df, metadata = future.result()
+                if df is not None:
+                    all_dataframes.append(df)
+                    successful_downloads.append(metadata)
+                    logger.info(f"✅ Successfully processed: {metadata['source_file']}")
+                else:
+                    failed_downloads.append({'url': url, 'error': 'No data returned'})
+            except Exception as e:
+                failed_downloads.append({'url': url, 'error': str(e)})
+                logger.error(f"❌ Failed to process {url}: {e}")
+
+    # Combine all dataframes
+    if all_dataframes:
+        logger.info(f"Combining {len(all_dataframes)} dataframes...")
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
+
+        # Add batch metadata
+        combined_df['batch_id'] = f"{service_type}_{year}_{month:02d}"
+        combined_df['ingestion_timestamp'] = datetime.now()
+        combined_df['service_type'] = service_type
+
+        logger.info(f"✅ Combined dataset shape: {combined_df.shape}")
+        logger.info(f"✅ Successful downloads: {len(successful_downloads)}")
+        logger.info(f"❌ Failed downloads: {len(failed_downloads)}")
+
+        return combined_df
+    else:
+        raise Exception("No data was successfully loaded from any source")
+
+def generate_url_list(year: int, month: int, service_type: str, chunk_months: int) -> 
+List[str]:
+    """Generate list of URLs to download based on parameters"""
+    urls = []
+    base_url = "https://d37ci6vzurychx.cloudfront.net/trip-data"
+
+    for month_offset in range(chunk_months):
+        current_month = month + month_offset
+        current_year = year
+
+        # Handle year rollover
+        if current_month > 12:
+            current_month = current_month - 12
+            current_year = year + 1
+
+        url = f"{base_url}/{service_type}_tripdata_{current_year}-{current_month:02d}.parquet"
+        urls.append(url)
+
+    return urls
+
+def download_and_process_file(url: str, file_index: int) -> Tuple[pd.DataFrame, Dict]:
+    """Download and process a single Parquet file"""
+    try:
+        start_time = time.time()
+        logger.info(f"📥 Downloading file {file_index + 1}: {url}")
+
+        # Check if file exists
+        response = requests.head(url, timeout=30)
+        if response.status_code != 200:
+            logger.warning(f"File not found: {url} (Status: {response.status_code})")
+            return None, None
+
+        # Download and read the parquet file
+        df = pd.read_parquet(url)
+
+        # Basic data validation
+        if df.empty:
+            logger.warning(f"Empty dataset from {url}")
+            return None, None
+
+        # Add source metadata
+        df['source_file'] = url.split('/')[-1]
+        df['file_index'] = file_index
+
+        # Processing time
+        processing_time = time.time() - start_time
+
+        metadata = {
+            'source_file': url.split('/')[-1],
+            'file_index': file_index,
+            'rows_loaded': len(df),
+            'columns_loaded': len(df.columns),
+            'processing_time_seconds': round(processing_time, 2),
+            'file_size_mb': round(response.headers.get('content-length', 0) / (1024*1024), 2)
+if response.headers.get('content-length') else 'unknown'
+        }
+
+
+
+        return df, metadata
+
+    except Exception as e:
+        logger.error(f"Error processing {url}: {e}")
+        return None, None
+
+@test
+def test_output(output, *args) -> None:
+    """Test the loaded data"""
+    assert output is not None, 'The output is undefined'
+    assert len(output) > 0, 'No data was loaded'
+    assert 'service_type' in output.columns, 'service_type column missing'
+    assert 'batch_id' in output.columns, 'batch_id column missing'
+    assert 'ingestion_timestamp' in output.columns, 'ingestion_timestamp column missing'
+
+    logger.info(f"✅ Test passed: {len(output):,} rows loaded successfully")

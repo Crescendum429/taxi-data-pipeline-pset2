@@ -1,0 +1,136 @@
+import pandas as pd
+import snowflake.connector
+from datetime import datetime
+import logging
+
+if 'data_exporter' not in globals():
+    from mage_ai.data_preparation.decorators import data_exporter
+
+logger = logging.getLogger(__name__)
+
+@data_exporter
+def export_to_snowflake_bronze(df: pd.DataFrame, *args, **kwargs) -> None:
+    from mage_ai.data_preparation.shared.secrets import get_secret_value
+
+    connection_params = {
+        'account': get_secret_value('SNOWFLAKE_ACCOUNT'),
+        'user': get_secret_value('SNOWFLAKE_USER'),
+        'password': get_secret_value('SNOWFLAKE_PASSWORD'),
+        'database': get_secret_value('SNOWFLAKE_DATABASE'),
+        'warehouse': get_secret_value('SNOWFLAKE_WAREHOUSE'),
+        'role': get_secret_value('SNOWFLAKE_ROLE'),
+        'schema': kwargs.get('schema_name', 'RAW')
+    }
+
+    missing_params = [key for key, value in connection_params.items() if not value]
+    if missing_params:
+        raise ValueError(f"Missing Snowflake connection parameters: {missing_params}")
+
+    service_type = df['service_type'].iloc[0] if 'service_type' in df.columns else kwargs.get('service_type', 'unknown')
+    table_name = kwargs.get('table_name', f"{service_type.upper()}_TRIPS")
+
+    logger.info(f"Exporting to {connection_params['database']}.{connection_params['schema']}.{table_name}")
+    logger.info(f"Rows: {len(df)}, Service: {service_type}")
+
+    conn = snowflake.connector.connect(**connection_params)
+    cursor = conn.cursor()
+
+    try:
+        create_bronze_table_if_not_exists(cursor, table_name, service_type)
+
+        df_export = prepare_dataframe_for_snowflake(df)
+
+        rows_inserted = insert_dataframe_batch(cursor, table_name, df_export)
+
+        logger.info(f"Export completed: {rows_inserted} rows inserted")
+
+    finally:
+        cursor.close()
+        conn.close()
+
+def prepare_dataframe_for_snowflake(df: pd.DataFrame) -> pd.DataFrame:
+    df_clean = df.copy()
+
+    datetime_columns = [col for col in df_clean.columns if 'datetime' in col.lower() or 'timestamp' in col.lower()]
+    for col in datetime_columns:
+        if df_clean[col].dtype == 'object':
+            df_clean[col] = pd.to_datetime(df_clean[col], errors='coerce')
+
+    numeric_columns = [col for col in df_clean.columns if any(x in col.lower() for x in ['amount', 'fare', 'tip', 'distance'])]
+    for col in numeric_columns:
+        if col in df_clean.columns:
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+
+    df_clean['SNOWFLAKE_LOADED_AT'] = datetime.now()
+    df_clean.columns = [col.upper() for col in df_clean.columns]
+
+    return df_clean
+
+def create_bronze_table_if_not_exists(cursor, table_name: str, service_type: str):
+    cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+    if cursor.fetchone():
+        return
+
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        VENDORID NUMBER,
+        TPEP_PICKUP_DATETIME TIMESTAMP_NTZ,
+        TPEP_DROPOFF_DATETIME TIMESTAMP_NTZ,
+        PASSENGER_COUNT NUMBER,
+        TRIP_DISTANCE FLOAT,
+        RATECODEID NUMBER,
+        STORE_AND_FWD_FLAG STRING,
+        PULOCATIONID NUMBER,
+        DOLOCATIONID NUMBER,
+        PAYMENT_TYPE NUMBER,
+        FARE_AMOUNT FLOAT,
+        EXTRA FLOAT,
+        MTA_TAX FLOAT,
+        TIP_AMOUNT FLOAT,
+        TOLLS_AMOUNT FLOAT,
+        IMPROVEMENT_SURCHARGE FLOAT,
+        TOTAL_AMOUNT FLOAT,
+        CONGESTION_SURCHARGE FLOAT,
+        AIRPORT_FEE FLOAT,
+        SOURCE_FILE STRING,
+        FILE_INDEX NUMBER,
+        LOAD_TIMESTAMP TIMESTAMP_NTZ,
+        BATCH_ID STRING,
+        INGESTION_TIMESTAMP TIMESTAMP_NTZ,
+        SERVICE_TYPE STRING,
+        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+    )
+    """
+
+    cursor.execute(create_sql)
+    logger.info(f"Table {table_name} created")
+
+def insert_dataframe_batch(cursor, table_name: str, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    columns = list(df.columns)
+    placeholders = ', '.join(['%s'] * len(columns))
+    insert_sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+
+    total_inserted = 0
+
+    for i in range(0, len(df), batch_size):
+        batch_df = df.iloc[i:i + batch_size]
+
+        batch_data = []
+        for _, row in batch_df.iterrows():
+            row_data = []
+            for val in row:
+                if pd.isna(val):
+                    row_data.append(None)
+                elif isinstance(val, pd.Timestamp):
+                    row_data.append(val.to_pydatetime())
+                else:
+                    row_data.append(val)
+            batch_data.append(tuple(row_data))
+
+        cursor.executemany(insert_sql, batch_data)
+        total_inserted += len(batch_data)
+
+        if i % 10000 == 0:
+            logger.info(f"Inserted {total_inserted} rows so far...")
+
+    return total_inserted
