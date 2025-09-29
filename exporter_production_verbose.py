@@ -39,11 +39,14 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
     total_rows = len(df)
     memory_mb = df.memory_usage(deep=True).sum() / 1024**2
 
-    logger.info(f"SNOWFLAKE EXPORT STARTING")
+    logger.info("="*80)
+    logger.info("SNOWFLAKE EXPORT STARTING")
+    logger.info("="*80)
     logger.info(f"Target: {connection_params['database']}.{connection_params['schema']}.{table_name}")
     logger.info(f"Dataset: {total_rows:,} rows, {memory_mb:.1f} MB, Service: {service_type}")
     logger.info(f"Batch size: {batch_size:,} rows")
     logger.info(f"Start time: {datetime.now().strftime('%H:%M:%S')}")
+    logger.info("="*80)
 
     conn = snowflake.connector.connect(**connection_params)
 
@@ -59,11 +62,14 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
         rows_per_second = rows_inserted / elapsed_time if elapsed_time > 0 else 0
         mb_per_second = memory_mb / elapsed_time if elapsed_time > 0 else 0
 
-        logger.info(f"EXPORT COMPLETED SUCCESSFULLY")
+        logger.info("="*80)
+        logger.info("EXPORT COMPLETED SUCCESSFULLY")
+        logger.info("="*80)
         logger.info(f"Total rows processed: {rows_inserted:,} / {total_rows:,}")
         logger.info(f"Total time: {elapsed_time:.2f}s")
         logger.info(f"Performance: {rows_per_second:.0f} rows/sec, {mb_per_second:.1f} MB/sec")
         logger.info(f"End time: {datetime.now().strftime('%H:%M:%S')}")
+        logger.info("="*80)
 
         cursor.close()
 
@@ -175,9 +181,11 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
     num_batches = (total_rows + batch_size - 1) // batch_size
     overall_start = time.time()
 
-    logger.info(f"Starting batch insert process")
+    logger.info("-"*60)
+    logger.info("STARTING BATCH INSERT PROCESS")
     logger.info(f"Total batches to process: {num_batches}")
     logger.info(f"Rows per batch: {batch_size:,}")
+    logger.info("-"*60)
 
     cursor.execute("BEGIN")
 
