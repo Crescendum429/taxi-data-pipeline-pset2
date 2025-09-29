@@ -33,6 +33,7 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
     service_type = df['service_type'].iloc[0] if 'service_type' in df.columns else kwargs.get('service_type', 'unknown')
     table_name = kwargs.get('table_name', f"{service_type.upper()}_TRIPS")
     batch_size = kwargs.get('batch_size', 100000)
+    enable_compression = kwargs.get('enable_compression', True)
 
     start_time = time.time()
     logger.info(f"Exporting to {connection_params['database']}.{connection_params['schema']}.{table_name}")
@@ -41,27 +42,40 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
     conn = snowflake.connector.connect(**connection_params)
 
     try:
+        optimize_session(conn)
+
         cursor = conn.cursor()
-        create_bronze_table_fixed(cursor, table_name, service_type)
+        create_bronze_table_optimized(cursor, table_name, service_type)
 
         df_export = prepare_dataframe_optimized(df)
 
-        rows_inserted = insert_dataframe_fixed(cursor, table_name, df_export, batch_size)
+        rows_inserted = insert_dataframe_ultra_optimized(cursor, table_name, df_export, batch_size)
 
         elapsed_time = time.time() - start_time
         rows_per_second = rows_inserted / elapsed_time if elapsed_time > 0 else 0
+        mb_per_second = (df_export.memory_usage(deep=True).sum() / 1024**2) / elapsed_time if elapsed_time > 0 else 0
 
         logger.info(f"Export completed: {rows_inserted:,} rows in {elapsed_time:.2f}s")
-        logger.info(f"Performance: {rows_per_second:.0f} rows/sec")
+        logger.info(f"Performance: {rows_per_second:.0f} rows/sec, {mb_per_second:.1f} MB/sec")
 
         cursor.close()
 
-    except Exception as e:
-        logger.error(f"Export failed: {e}")
-        raise
     finally:
         conn.close()
         gc.collect()
+
+def optimize_session(conn) -> None:
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER SESSION SET TIMEZONE = 'UTC'")
+        cursor.execute("ALTER SESSION SET TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'")
+        cursor.execute("ALTER SESSION SET JDBC_QUERY_RESULT_FORMAT = 'JSON'")
+        cursor.execute("ALTER SESSION SET CLIENT_MEMORY_LIMIT = 2048")
+        cursor.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 3600")
+    except Exception as e:
+        logger.warning(f"Session optimization warning: {e}")
+    finally:
+        cursor.close()
 
 def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
@@ -82,11 +96,15 @@ def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
             df_clean[col] = df_clean[col].astype('string').fillna('')
 
     df_clean['SNOWFLAKE_LOADED_AT'] = datetime.now()
+
     df_clean.columns = [col.upper() for col in df_clean.columns]
+
+    memory_usage_mb = df_clean.memory_usage(deep=True).sum() / 1024**2
+    logger.info(f"Prepared dataframe: {df_clean.shape}, Memory: {memory_usage_mb:.1f} MB")
 
     return df_clean
 
-def create_bronze_table_fixed(cursor, table_name: str, service_type: str):
+def create_bronze_table_optimized(cursor, table_name: str, service_type: str):
     cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
     if cursor.fetchone():
         return
@@ -118,20 +136,25 @@ def create_bronze_table_fixed(cursor, table_name: str, service_type: str):
         BATCH_ID STRING(50),
         INGESTION_TIMESTAMP TIMESTAMP_NTZ,
         SERVICE_TYPE STRING(10),
-        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_RUN_ID STRING(100) DEFAULT 'MAGE_' || REPLACE(REPLACE(CURRENT_TIMESTAMP()::STRING, ' ', '_'), ':', '-')
     )
-    COMMENT = 'Bronze layer - {service_type} taxi trip data'
+    CLUSTER BY (TPEP_PICKUP_DATETIME, SERVICE_TYPE)
+    COMMENT = 'Bronze layer - {service_type} taxi trip data optimized'
     """
 
     cursor.execute(create_sql)
-    logger.info(f"Table {table_name} created")
+    logger.info(f"Optimized table {table_name} created with clustering")
 
-def insert_dataframe_fixed(cursor, table_name: str, df: pd.DataFrame, batch_size: int = 100000) -> int:
+def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, batch_size: int = 100000) -> int:
     columns = list(df.columns)
     total_rows = len(df)
     total_inserted = 0
 
-    logger.info(f"Starting insert with batch size: {batch_size:,}")
+    logger.info(f"Starting ultra-optimized insert with batch size: {batch_size:,}")
+
+    cursor.execute("BEGIN")
 
     try:
         for i in range(0, total_rows, batch_size):
@@ -139,7 +162,7 @@ def insert_dataframe_fixed(cursor, table_name: str, df: pd.DataFrame, batch_size
             batch_df = df.iloc[i:i + batch_size]
             actual_batch_size = len(batch_df)
 
-            batch_data = convert_batch_fixed(batch_df)
+            batch_data = convert_batch_optimized(batch_df)
 
             placeholders = ', '.join(['%s'] * len(columns))
             insert_sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
@@ -154,21 +177,27 @@ def insert_dataframe_fixed(cursor, table_name: str, df: pd.DataFrame, batch_size
             logger.info(f"Batch {i//batch_size + 1}: {actual_batch_size:,} rows in {batch_time:.2f}s ({batch_rate:.0f} rows/sec) - Progress: {progress:.1f}%")
 
             del batch_data, batch_df
-            if i % 500000 == 0:  # GC every 5 batches
-                gc.collect()
+            gc.collect()
+
+        cursor.execute("COMMIT")
 
     except Exception as e:
-        logger.error(f"Insert failed at batch {i//batch_size + 1}: {e}")
+        cursor.execute("ROLLBACK")
+        logger.error(f"Transaction rolled back due to error: {e}")
         raise
 
     return total_inserted
 
-def convert_batch_fixed(batch_df: pd.DataFrame) -> List[Tuple]:
+def convert_batch_optimized(batch_df: pd.DataFrame) -> List[Tuple]:
     batch_data = []
 
-    for _, row in batch_df.iterrows():
+    numpy_arrays = {col: batch_df[col].values for col in batch_df.columns}
+
+    for i in range(len(batch_df)):
         row_data = []
-        for val in row:
+        for col in batch_df.columns:
+            val = numpy_arrays[col][i]
+
             if pd.isna(val):
                 row_data.append(None)
             elif isinstance(val, (pd.Timestamp, np.datetime64)):
@@ -176,13 +205,11 @@ def convert_batch_fixed(batch_df: pd.DataFrame) -> List[Tuple]:
                     row_data.append(None)
                 else:
                     row_data.append(pd.to_datetime(val).to_pydatetime())
-            elif isinstance(val, (np.integer)):
-                row_data.append(int(val))
-            elif isinstance(val, (np.floating)):
+            elif isinstance(val, (np.integer, np.floating)):
                 if np.isnan(val):
                     row_data.append(None)
                 else:
-                    row_data.append(float(val))
+                    row_data.append(float(val) if isinstance(val, np.floating) else int(val))
             elif isinstance(val, bytes):
                 row_data.append(val.decode('utf-8', errors='ignore'))
             else:
@@ -191,3 +218,16 @@ def convert_batch_fixed(batch_df: pd.DataFrame) -> List[Tuple]:
         batch_data.append(tuple(row_data))
 
     return batch_data
+
+def log_performance_metrics(df: pd.DataFrame, start_time: float, rows_inserted: int):
+    elapsed_time = time.time() - start_time
+    rows_per_second = rows_inserted / elapsed_time if elapsed_time > 0 else 0
+    memory_usage_mb = df.memory_usage(deep=True).sum() / 1024**2
+    mb_per_second = memory_usage_mb / elapsed_time if elapsed_time > 0 else 0
+
+    logger.info(f"Performance Summary:")
+    logger.info(f"  Total time: {elapsed_time:.2f}s")
+    logger.info(f"  Rows/second: {rows_per_second:,.0f}")
+    logger.info(f"  Memory processed: {memory_usage_mb:.1f} MB")
+    logger.info(f"  MB/second: {mb_per_second:.1f}")
+    logger.info(f"  Average row size: {memory_usage_mb * 1024 / len(df):.1f} KB")

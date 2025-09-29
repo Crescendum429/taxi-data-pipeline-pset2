@@ -33,26 +33,37 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
     service_type = df['service_type'].iloc[0] if 'service_type' in df.columns else kwargs.get('service_type', 'unknown')
     table_name = kwargs.get('table_name', f"{service_type.upper()}_TRIPS")
     batch_size = kwargs.get('batch_size', 100000)
+    enable_compression = kwargs.get('enable_compression', True)
 
     start_time = time.time()
-    logger.info(f"Exporting to {connection_params['database']}.{connection_params['schema']}.{table_name}")
-    logger.info(f"Rows: {len(df):,}, Service: {service_type}, Batch size: {batch_size:,}")
+    total_rows = len(df)
+    memory_mb = df.memory_usage(deep=True).sum() / 1024**2
+
+    logger.info(f"SNOWFLAKE EXPORT STARTING")
+    logger.info(f"Target: {connection_params['database']}.{connection_params['schema']}.{table_name}")
+    logger.info(f"Dataset: {total_rows:,} rows, {memory_mb:.1f} MB, Service: {service_type}")
+    logger.info(f"Batch size: {batch_size:,} rows")
+    logger.info(f"Start time: {datetime.now().strftime('%H:%M:%S')}")
 
     conn = snowflake.connector.connect(**connection_params)
 
     try:
+        optimize_session(conn)
         cursor = conn.cursor()
-        create_bronze_table_fixed(cursor, table_name, service_type)
+        create_bronze_table_optimized(cursor, table_name, service_type)
 
         df_export = prepare_dataframe_optimized(df)
-
-        rows_inserted = insert_dataframe_fixed(cursor, table_name, df_export, batch_size)
+        rows_inserted = insert_dataframe_ultra_optimized(cursor, table_name, df_export, batch_size, total_rows)
 
         elapsed_time = time.time() - start_time
         rows_per_second = rows_inserted / elapsed_time if elapsed_time > 0 else 0
+        mb_per_second = memory_mb / elapsed_time if elapsed_time > 0 else 0
 
-        logger.info(f"Export completed: {rows_inserted:,} rows in {elapsed_time:.2f}s")
-        logger.info(f"Performance: {rows_per_second:.0f} rows/sec")
+        logger.info(f"EXPORT COMPLETED SUCCESSFULLY")
+        logger.info(f"Total rows processed: {rows_inserted:,} / {total_rows:,}")
+        logger.info(f"Total time: {elapsed_time:.2f}s")
+        logger.info(f"Performance: {rows_per_second:.0f} rows/sec, {mb_per_second:.1f} MB/sec")
+        logger.info(f"End time: {datetime.now().strftime('%H:%M:%S')}")
 
         cursor.close()
 
@@ -63,7 +74,28 @@ def export_to_snowflake_optimized(df: pd.DataFrame, *args, **kwargs) -> None:
         conn.close()
         gc.collect()
 
+def optimize_session(conn) -> None:
+    cursor = conn.cursor()
+    try:
+        optimizations = [
+            "ALTER SESSION SET TIMEZONE = 'UTC'",
+            "ALTER SESSION SET TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'",
+            "ALTER SESSION SET JDBC_QUERY_RESULT_FORMAT = 'JSON'",
+            "ALTER SESSION SET CLIENT_MEMORY_LIMIT = 2048",
+            "ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 3600"
+        ]
+        for opt in optimizations:
+            cursor.execute(opt)
+        logger.info("Session optimizations applied")
+    except Exception as e:
+        logger.warning(f"Session optimization warning: {e}")
+    finally:
+        cursor.close()
+
 def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
+    prep_start = time.time()
+    logger.info("Preparing dataframe for export")
+
     df_clean = df.copy()
 
     datetime_columns = [col for col in df_clean.columns if 'datetime' in col.lower() or 'timestamp' in col.lower()]
@@ -84,13 +116,21 @@ def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
     df_clean['SNOWFLAKE_LOADED_AT'] = datetime.now()
     df_clean.columns = [col.upper() for col in df_clean.columns]
 
+    prep_time = time.time() - prep_start
+    memory_usage_mb = df_clean.memory_usage(deep=True).sum() / 1024**2
+    logger.info(f"Dataframe prepared in {prep_time:.2f}s, Memory: {memory_usage_mb:.1f} MB")
+
     return df_clean
 
-def create_bronze_table_fixed(cursor, table_name: str, service_type: str):
+def create_bronze_table_optimized(cursor, table_name: str, service_type: str):
+    logger.info(f"Verifying table {table_name}")
+
     cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
     if cursor.fetchone():
+        logger.info(f"Table {table_name} already exists")
         return
 
+    logger.info(f"Creating optimized table {table_name}")
     create_sql = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         VENDORID NUMBER(3,0),
@@ -118,28 +158,38 @@ def create_bronze_table_fixed(cursor, table_name: str, service_type: str):
         BATCH_ID STRING(50),
         INGESTION_TIMESTAMP TIMESTAMP_NTZ,
         SERVICE_TYPE STRING(10),
-        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_RUN_ID STRING(100) DEFAULT 'MAGE_' || REPLACE(REPLACE(CURRENT_TIMESTAMP()::STRING, ' ', '_'), ':', '-')
     )
-    COMMENT = 'Bronze layer - {service_type} taxi trip data'
+    CLUSTER BY (TPEP_PICKUP_DATETIME, SERVICE_TYPE)
+    COMMENT = 'Bronze layer - {service_type} taxi trip data optimized'
     """
 
     cursor.execute(create_sql)
-    logger.info(f"Table {table_name} created")
+    logger.info(f"Table {table_name} created with clustering optimization")
 
-def insert_dataframe_fixed(cursor, table_name: str, df: pd.DataFrame, batch_size: int = 100000) -> int:
+def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, batch_size: int, total_rows: int) -> int:
     columns = list(df.columns)
-    total_rows = len(df)
     total_inserted = 0
+    num_batches = (total_rows + batch_size - 1) // batch_size
+    overall_start = time.time()
 
-    logger.info(f"Starting insert with batch size: {batch_size:,}")
+    logger.info(f"Starting batch insert process")
+    logger.info(f"Total batches to process: {num_batches}")
+    logger.info(f"Rows per batch: {batch_size:,}")
+
+    cursor.execute("BEGIN")
 
     try:
         for i in range(0, total_rows, batch_size):
             batch_start = time.time()
+            batch_number = i // batch_size + 1
+
             batch_df = df.iloc[i:i + batch_size]
             actual_batch_size = len(batch_df)
 
-            batch_data = convert_batch_fixed(batch_df)
+            batch_data = convert_batch_ultra_optimized(batch_df)
 
             placeholders = ', '.join(['%s'] * len(columns))
             insert_sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
@@ -151,24 +201,36 @@ def insert_dataframe_fixed(cursor, table_name: str, df: pd.DataFrame, batch_size
             batch_rate = actual_batch_size / batch_time if batch_time > 0 else 0
             progress = (total_inserted / total_rows) * 100
 
-            logger.info(f"Batch {i//batch_size + 1}: {actual_batch_size:,} rows in {batch_time:.2f}s ({batch_rate:.0f} rows/sec) - Progress: {progress:.1f}%")
+            elapsed_total = time.time() - overall_start
+            avg_rate = total_inserted / elapsed_total if elapsed_total > 0 else 0
+            remaining_rows = total_rows - total_inserted
+            eta_seconds = remaining_rows / avg_rate if avg_rate > 0 else 0
+            eta_minutes = eta_seconds / 60
+
+            logger.info(f"Batch {batch_number}/{num_batches}: {actual_batch_size:,} rows in {batch_time:.2f}s ({batch_rate:.0f} rows/sec)")
+            logger.info(f"Progress: {progress:.1f}% ({total_inserted:,}/{total_rows:,}) - ETA: {eta_minutes:.1f} min")
 
             del batch_data, batch_df
-            if i % 500000 == 0:  # GC every 5 batches
+            if batch_number % 5 == 0:
                 gc.collect()
 
+        cursor.execute("COMMIT")
+        logger.info("Transaction committed successfully")
+
     except Exception as e:
-        logger.error(f"Insert failed at batch {i//batch_size + 1}: {e}")
+        cursor.execute("ROLLBACK")
+        logger.error(f"Transaction rolled back due to error: {e}")
         raise
 
     return total_inserted
 
-def convert_batch_fixed(batch_df: pd.DataFrame) -> List[Tuple]:
+def convert_batch_ultra_optimized(batch_df: pd.DataFrame) -> List[Tuple]:
     batch_data = []
+    values_array = batch_df.values
 
-    for _, row in batch_df.iterrows():
+    for row_idx in range(len(batch_df)):
         row_data = []
-        for val in row:
+        for col_idx, val in enumerate(values_array[row_idx]):
             if pd.isna(val):
                 row_data.append(None)
             elif isinstance(val, (pd.Timestamp, np.datetime64)):
