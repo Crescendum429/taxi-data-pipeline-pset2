@@ -31,38 +31,37 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
         raise ValueError(f"Missing Snowflake connection parameters: {missing_params}")
 
     service_type = df['service_type'].iloc[0] if 'service_type' in df.columns else kwargs.get('service_type', 'unknown')
-    table_name = f"YELLOW_TRIPS_2015_01"
-    batch_size = kwargs.get('batch_size', 50000)
+    table_name = "YELLOW_TRIPS"
+    batch_size = kwargs.get('batch_size', 25000)
 
     start_time = time.time()
     total_rows = len(df)
     memory_mb = df.memory_usage(deep=True).sum() / 1024**2
 
     logger.info("="*80)
-    logger.info("SNOWFLAKE EXPORT STARTING - JANUARY 2015 TEST")
+    logger.info("FAST SNOWFLAKE EXPORT - JANUARY 2015 TO YELLOW_TRIPS")
     logger.info("="*80)
     logger.info(f"Target: {connection_params['database']}.{connection_params['schema']}.{table_name}")
     logger.info(f"Dataset: {total_rows:,} rows, {memory_mb:.1f} MB, Service: {service_type}")
-    logger.info(f"Batch size: {batch_size:,} rows")
+    logger.info(f"Batch size: {batch_size:,} rows (reduced for speed)")
     logger.info(f"Start time: {datetime.now().strftime('%H:%M:%S')}")
     logger.info("="*80)
 
     conn = snowflake.connector.connect(**connection_params)
 
     try:
-        optimize_session(conn)
         cursor = conn.cursor()
-        create_test_table_2015(cursor, table_name, service_type)
+        ensure_yellow_trips_table(cursor, table_name, service_type)
 
-        df_export = prepare_dataframe_optimized(df)
-        rows_inserted = insert_dataframe_ultra_optimized(cursor, table_name, df_export, batch_size, total_rows)
+        df_export = prepare_dataframe_fast(df)
+        rows_inserted = insert_dataframe_fast(cursor, table_name, df_export, batch_size, total_rows)
 
         elapsed_time = time.time() - start_time
         rows_per_second = rows_inserted / elapsed_time if elapsed_time > 0 else 0
         mb_per_second = memory_mb / elapsed_time if elapsed_time > 0 else 0
 
         logger.info("="*80)
-        logger.info("JANUARY 2015 EXPORT COMPLETED SUCCESSFULLY")
+        logger.info("FAST EXPORT COMPLETED SUCCESSFULLY")
         logger.info("="*80)
         logger.info(f"Total rows processed: {rows_inserted:,} / {total_rows:,}")
         logger.info(f"Total time: {elapsed_time:.2f}s")
@@ -79,60 +78,28 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
         conn.close()
         gc.collect()
 
-def optimize_session(conn) -> None:
-    cursor = conn.cursor()
-    try:
-        optimizations = [
-            "ALTER SESSION SET TIMEZONE = 'UTC'",
-            "ALTER SESSION SET TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'",
-            "ALTER SESSION SET JDBC_QUERY_RESULT_FORMAT = 'JSON'",
-            "ALTER SESSION SET CLIENT_MEMORY_LIMIT = 2048",
-            "ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 3600"
-        ]
-        for opt in optimizations:
-            cursor.execute(opt)
-        logger.info("Session optimizations applied")
-    except Exception as e:
-        logger.warning(f"Session optimization warning: {e}")
-    finally:
-        cursor.close()
-
-def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_dataframe_fast(df: pd.DataFrame) -> pd.DataFrame:
     prep_start = time.time()
-    logger.info("Preparing January 2015 dataframe for export")
+    logger.info("Fast dataframe preparation starting")
 
     df_clean = df.copy()
-
-    datetime_columns = [col for col in df_clean.columns if 'datetime' in col.lower() or 'timestamp' in col.lower()]
-    for col in datetime_columns:
-        if df_clean[col].dtype == 'object':
-            df_clean[col] = pd.to_datetime(df_clean[col], errors='coerce', utc=False)
-
-    numeric_columns = [col for col in df_clean.columns if any(x in col.lower() for x in ['amount', 'fare', 'tip', 'distance'])]
-    for col in numeric_columns:
-        if col in df_clean.columns:
-            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce', downcast='float')
-
-    string_columns = df_clean.select_dtypes(include=['object']).columns
-    for col in string_columns:
-        if col not in datetime_columns:
-            df_clean[col] = df_clean[col].astype('string').fillna('')
-
     df_clean['SNOWFLAKE_LOADED_AT'] = datetime.now()
     df_clean.columns = [col.upper() for col in df_clean.columns]
 
     prep_time = time.time() - prep_start
-    memory_usage_mb = df_clean.memory_usage(deep=True).sum() / 1024**2
-    logger.info(f"Dataframe prepared in {prep_time:.2f}s, Memory: {memory_usage_mb:.1f} MB")
+    logger.info(f"Fast dataframe prepared in {prep_time:.2f}s")
 
     return df_clean
 
-def create_test_table_2015(cursor, table_name: str, service_type: str):
-    logger.info(f"Creating test table {table_name} for January 2015")
+def ensure_yellow_trips_table(cursor, table_name: str, service_type: str):
+    logger.info(f"Verifying YELLOW_TRIPS table exists")
 
-    cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-    logger.info(f"Dropped existing table {table_name} if it existed")
+    cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+    if cursor.fetchone():
+        logger.info(f"Table {table_name} already exists, ready for data")
+        return
 
+    logger.info(f"Creating YELLOW_TRIPS table")
     create_sql = f"""
     CREATE TABLE {table_name} (
         VENDORID NUMBER(3,0),
@@ -163,20 +130,20 @@ def create_test_table_2015(cursor, table_name: str, service_type: str):
         SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
     )
     CLUSTER BY (TPEP_PICKUP_DATETIME, SERVICE_TYPE)
-    COMMENT = 'Test table - January 2015 yellow taxi trip data'
+    COMMENT = 'Bronze layer - Yellow taxi trip data 2015-2025'
     """
 
     cursor.execute(create_sql)
-    logger.info(f"Test table {table_name} created successfully with clustering")
+    logger.info(f"YELLOW_TRIPS table created successfully")
 
-def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, batch_size: int, total_rows: int) -> int:
+def insert_dataframe_fast(cursor, table_name: str, df: pd.DataFrame, batch_size: int, total_rows: int) -> int:
     columns = list(df.columns)
     total_inserted = 0
     num_batches = (total_rows + batch_size - 1) // batch_size
     overall_start = time.time()
 
     logger.info("-"*60)
-    logger.info("STARTING BATCH INSERT PROCESS FOR JANUARY 2015")
+    logger.info("STARTING FAST BATCH INSERT")
     logger.info(f"Total batches to process: {num_batches}")
     logger.info(f"Rows per batch: {batch_size:,}")
     logger.info("-"*60)
@@ -191,7 +158,7 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
             batch_df = df.iloc[i:i + batch_size]
             actual_batch_size = len(batch_df)
 
-            batch_data = convert_batch_ultra_optimized(batch_df)
+            batch_data = convert_batch_simple(batch_df)
 
             placeholders = ', '.join(['%s'] * len(columns))
             insert_sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
@@ -213,11 +180,11 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
             logger.info(f"Progress: {progress:.1f}% ({total_inserted:,}/{total_rows:,}) - ETA: {eta_minutes:.1f} min")
 
             del batch_data, batch_df
-            if batch_number % 5 == 0:
+            if batch_number % 10 == 0:
                 gc.collect()
 
         cursor.execute("COMMIT")
-        logger.info("January 2015 transaction committed successfully")
+        logger.info("Fast transaction committed successfully")
 
     except Exception as e:
         cursor.execute("ROLLBACK")
@@ -226,29 +193,20 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
 
     return total_inserted
 
-def convert_batch_ultra_optimized(batch_df: pd.DataFrame) -> List[Tuple]:
+def convert_batch_simple(batch_df: pd.DataFrame) -> List[Tuple]:
     batch_data = []
-    values_array = batch_df.values
 
-    for row_idx in range(len(batch_df)):
+    for _, row in batch_df.iterrows():
         row_data = []
-        for col_idx, val in enumerate(values_array[row_idx]):
+        for val in row:
             if pd.isna(val):
                 row_data.append(None)
             elif isinstance(val, (pd.Timestamp, np.datetime64)):
-                if pd.isna(val):
-                    row_data.append(None)
-                else:
-                    row_data.append(pd.to_datetime(val).to_pydatetime())
-            elif isinstance(val, (np.integer)):
+                row_data.append(pd.to_datetime(val).to_pydatetime() if not pd.isna(val) else None)
+            elif isinstance(val, np.integer):
                 row_data.append(int(val))
-            elif isinstance(val, (np.floating)):
-                if np.isnan(val):
-                    row_data.append(None)
-                else:
-                    row_data.append(float(val))
-            elif isinstance(val, bytes):
-                row_data.append(val.decode('utf-8', errors='ignore'))
+            elif isinstance(val, np.floating):
+                row_data.append(float(val) if not np.isnan(val) else None)
             else:
                 row_data.append(str(val) if val is not None else None)
 

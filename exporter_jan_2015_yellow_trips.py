@@ -31,7 +31,7 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
         raise ValueError(f"Missing Snowflake connection parameters: {missing_params}")
 
     service_type = df['service_type'].iloc[0] if 'service_type' in df.columns else kwargs.get('service_type', 'unknown')
-    table_name = f"YELLOW_TRIPS_2015_01"
+    table_name = "YELLOW_TRIPS"
     batch_size = kwargs.get('batch_size', 50000)
 
     start_time = time.time()
@@ -39,7 +39,7 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
     memory_mb = df.memory_usage(deep=True).sum() / 1024**2
 
     logger.info("="*80)
-    logger.info("SNOWFLAKE EXPORT STARTING - JANUARY 2015 TEST")
+    logger.info("SNOWFLAKE EXPORT STARTING - JANUARY 2015 TO YELLOW_TRIPS")
     logger.info("="*80)
     logger.info(f"Target: {connection_params['database']}.{connection_params['schema']}.{table_name}")
     logger.info(f"Dataset: {total_rows:,} rows, {memory_mb:.1f} MB, Service: {service_type}")
@@ -52,7 +52,7 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
     try:
         optimize_session(conn)
         cursor = conn.cursor()
-        create_test_table_2015(cursor, table_name, service_type)
+        ensure_yellow_trips_table(cursor, table_name, service_type)
 
         df_export = prepare_dataframe_optimized(df)
         rows_inserted = insert_dataframe_ultra_optimized(cursor, table_name, df_export, batch_size, total_rows)
@@ -62,7 +62,7 @@ def export_to_snowflake_jan_2015(df: pd.DataFrame, *args, **kwargs) -> None:
         mb_per_second = memory_mb / elapsed_time if elapsed_time > 0 else 0
 
         logger.info("="*80)
-        logger.info("JANUARY 2015 EXPORT COMPLETED SUCCESSFULLY")
+        logger.info("JANUARY 2015 EXPORT TO YELLOW_TRIPS COMPLETED SUCCESSFULLY")
         logger.info("="*80)
         logger.info(f"Total rows processed: {rows_inserted:,} / {total_rows:,}")
         logger.info(f"Total time: {elapsed_time:.2f}s")
@@ -99,7 +99,7 @@ def optimize_session(conn) -> None:
 
 def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
     prep_start = time.time()
-    logger.info("Preparing January 2015 dataframe for export")
+    logger.info("Preparing January 2015 dataframe for YELLOW_TRIPS")
 
     df_clean = df.copy()
 
@@ -127,12 +127,15 @@ def prepare_dataframe_optimized(df: pd.DataFrame) -> pd.DataFrame:
 
     return df_clean
 
-def create_test_table_2015(cursor, table_name: str, service_type: str):
-    logger.info(f"Creating test table {table_name} for January 2015")
+def ensure_yellow_trips_table(cursor, table_name: str, service_type: str):
+    logger.info(f"Verifying YELLOW_TRIPS table exists")
 
-    cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-    logger.info(f"Dropped existing table {table_name} if it existed")
+    cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+    if cursor.fetchone():
+        logger.info(f"Table {table_name} already exists, ready for data")
+        return
 
+    logger.info(f"Creating YELLOW_TRIPS table")
     create_sql = f"""
     CREATE TABLE {table_name} (
         VENDORID NUMBER(3,0),
@@ -160,14 +163,16 @@ def create_test_table_2015(cursor, table_name: str, service_type: str):
         BATCH_ID STRING(50),
         INGESTION_TIMESTAMP TIMESTAMP_NTZ,
         SERVICE_TYPE STRING(10),
-        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        SNOWFLAKE_LOADED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        BRONZE_RUN_ID STRING(100) DEFAULT 'MAGE_' || REPLACE(REPLACE(CURRENT_TIMESTAMP()::STRING, ' ', '_'), ':', '-')
     )
     CLUSTER BY (TPEP_PICKUP_DATETIME, SERVICE_TYPE)
-    COMMENT = 'Test table - January 2015 yellow taxi trip data'
+    COMMENT = 'Bronze layer - Yellow taxi trip data 2015-2025'
     """
 
     cursor.execute(create_sql)
-    logger.info(f"Test table {table_name} created successfully with clustering")
+    logger.info(f"YELLOW_TRIPS table created successfully with clustering")
 
 def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, batch_size: int, total_rows: int) -> int:
     columns = list(df.columns)
@@ -176,7 +181,7 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
     overall_start = time.time()
 
     logger.info("-"*60)
-    logger.info("STARTING BATCH INSERT PROCESS FOR JANUARY 2015")
+    logger.info("STARTING BATCH INSERT PROCESS FOR YELLOW_TRIPS")
     logger.info(f"Total batches to process: {num_batches}")
     logger.info(f"Rows per batch: {batch_size:,}")
     logger.info("-"*60)
@@ -217,7 +222,7 @@ def insert_dataframe_ultra_optimized(cursor, table_name: str, df: pd.DataFrame, 
                 gc.collect()
 
         cursor.execute("COMMIT")
-        logger.info("January 2015 transaction committed successfully")
+        logger.info("YELLOW_TRIPS transaction committed successfully")
 
     except Exception as e:
         cursor.execute("ROLLBACK")
