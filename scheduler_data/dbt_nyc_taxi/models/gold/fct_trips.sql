@@ -7,7 +7,7 @@
 WITH trip_facts AS (
     SELECT
         -- Surrogate trip ID
-        {{ dbt_utils.surrogate_key(['service_type', 'pickup_datetime', 'dropoff_datetime', 'pulocationid', 'dolocationid', 'total_amount']) }} AS trip_id,
+        MD5(CONCAT(service_type, '|', pickup_datetime, '|', dropoff_datetime, '|', pulocationid, '|', dolocationid, '|', total_amount)) AS trip_id,
 
         -- Service type
         service_type,
@@ -20,11 +20,11 @@ WITH trip_facts AS (
 
         -- Trip metrics
         trip_distance,
-        EXTRACT(EPOCH FROM (dropoff_datetime - pickup_datetime)) / 3600.0 AS trip_duration_hours,
+        DATEDIFF(SECOND, pickup_datetime, dropoff_datetime) / 3600.0 AS trip_duration_hours,
 
         CASE
             WHEN trip_distance > 0 AND dropoff_datetime > pickup_datetime
-            THEN trip_distance / (EXTRACT(EPOCH FROM (dropoff_datetime - pickup_datetime)) / 3600.0)
+            THEN trip_distance / (DATEDIFF(SECOND, pickup_datetime, dropoff_datetime) / 3600.0)
             ELSE 0
         END AS avg_speed_mph,
 

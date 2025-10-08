@@ -3,12 +3,12 @@
     unique_key='date_sk'
 ) }}
 
-WITH date_spine AS (
-    {{ dbt_utils.date_spine(
-        datepart="day",
-        start_date="cast('2015-01-01' as date)",
-        end_date="cast('2025-12-31' as date)"
-    ) }}
+WITH RECURSIVE date_spine AS (
+    SELECT CAST('2015-01-01' AS DATE) AS date_day
+    UNION ALL
+    SELECT DATEADD(day, 1, date_day)
+    FROM date_spine
+    WHERE date_day < CAST('2025-12-31' AS DATE)
 ),
 
 date_dimension AS (

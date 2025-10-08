@@ -1,40 +1,80 @@
-# Sensitive files
-*.log
-.env
-.claude.json*
+# Archivos temporales y de prueba en raíz
+*_optimizado*.py
+*_fixed.py
+*_sin_verificacion*.py
+*_latest.py
+taxi_*.py
+maximize_performance.sh
+network_monitor.py
+network_stats_*.json
+optimize_network.sh
+revert_network.sh
+io_config.yaml
+laptop_config_changes.txt
+CHECKLIST_*.txt
 
-# Snowflake credentials
-secrets/
-
-# Data files
-*.parquet
-*.csv
-data/
-
-# Docker volumes
-scheduler_data/.cache/
+# Cache y temporales de Mage
+scheduler_data/.user.yml
 scheduler_data/.file_versions/
+scheduler_data/.operation_history/
+scheduler_data/scheduler/.cache/
+scheduler_data/scheduler/.file_versions/
+scheduler_data/scheduler/.operation_history/
+scheduler_data/scheduler/mage-ai.db
+scheduler_data/scheduler/.user.yml
+scheduler_data/scheduler/pipelines/*/variables/
+scheduler_data/scheduler/custom/
+
+# dbt artifacts
+scheduler_data/dbt_nyc_taxi/target/
+scheduler_data/dbt_nyc_taxi/dbt_packages/
+scheduler_data/dbt_nyc_taxi/logs/
+scheduler_data/dbt_nyc_taxi/packages.yml
+scheduler_data/dbt_packages/
+scheduler_data/target/
+scheduler_data/logs/
+scheduler_data/package-lock.yml
+scheduler_data/packages.yml
+scheduler_data/dbt_project.yml
+scheduler_data/profiles.yml
+scheduler_data/models/
+scheduler_data/mage-ai.db
+scheduler_data/secrets/
+
+# Pipelines de desarrollo (no usados)
+scheduler_data/scheduler/pipelines/taxi_data/
+scheduler_data/scheduler/data_loaders/green_loader.py
+scheduler_data/scheduler/data_loaders/taxi_data.py
+scheduler_data/scheduler/data_exporters/green_exporter.py
+scheduler_data/scheduler/data_exporters/taxi_data_exporter.py
+scheduler_data/scheduler/dbts/
+scheduler_data/scheduler/pipelines/*/variables/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
-*.so
+.pytest_cache/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Temporary files
+# Checkpoints
+.ipynb_checkpoints/
+
+# Temporales
+*.log
 *.tmp
-*.temp
-~*
-.~*
+/tmp/
+
+# Git
+.git/
+*.parquet

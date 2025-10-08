@@ -1,9 +1,5 @@
 {{ config(
-    materialized='table',
-    indexes=[
-        {'columns': ['pickup_datetime'], 'type': 'btree'},
-        {'columns': ['pulocationid', 'dolocationid'], 'type': 'btree'}
-    ]
+    materialized='table'
 ) }}
 
 WITH yellow_trips AS (
@@ -42,7 +38,7 @@ WITH yellow_trips AS (
         -- Metadata
         CURRENT_TIMESTAMP() AS dbt_loaded_at
 
-    FROM {{ source('raw_nyc_taxi', 'yellow_trips') }}
+    FROM {{ source('raw_nyc_taxi', 'taxi_yellow_data') }}
     WHERE tpep_pickup_datetime IS NOT NULL
       AND tpep_dropoff_datetime IS NOT NULL
       AND trip_distance >= 0
@@ -78,7 +74,7 @@ green_trips AS (
         improvement_surcharge,
         total_amount,
         congestion_surcharge,
-        airport_fee,
+        NULL AS airport_fee,
 
         -- Green-specific fields
         ehail_fee,
@@ -86,7 +82,7 @@ green_trips AS (
         -- Metadata
         CURRENT_TIMESTAMP() AS dbt_loaded_at
 
-    FROM {{ source('raw_nyc_taxi', 'green_trips') }}
+    FROM {{ source('raw_nyc_taxi', 'taxi_green_data') }}
     WHERE lpep_pickup_datetime IS NOT NULL
       AND lpep_dropoff_datetime IS NOT NULL
       AND trip_distance >= 0

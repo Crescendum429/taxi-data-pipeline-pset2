@@ -4,9 +4,13 @@ sources:
   - name: raw_nyc_taxi
     description: "Raw NYC TLC Trip Record Data ingested from Parquet files"
     database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
-    schema: raw
+    schema: RAW
+    quoting:
+      database: false
+      schema: false
+      identifier: true
     tables:
-      - name: yellow_trips
+      - name: taxi_yellow_data
         description: "Raw yellow taxi trip records"
         columns:
           - name: vendorid
@@ -48,7 +52,7 @@ sources:
           - name: airport_fee
             description: "Airport improvement fee for trips to/from airports"
 
-      - name: green_trips
+      - name: taxi_green_data
         description: "Raw green taxi trip records"
         columns:
           - name: vendorid

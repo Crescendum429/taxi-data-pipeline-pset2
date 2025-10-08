@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: fct_trips
+    description: "Fact table containing all taxi trip transactions"
+    columns:
+      - name: trip_id
+        description: "Identifier for each trip (may have duplicates for identical trips)"
+        tests:
+          - not_null
+
+      - name: service_type
+        description: "Type of taxi service"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['yellow', 'green']
+
+      - name: pickup_date_sk
+        description: "Foreign key to dim_date for pickup"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_sk
+
+      - name: dropoff_date_sk
+        description: "Foreign key to dim_date for dropoff"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_sk
+
+      - name: pickup_zone_sk
+        description: "Foreign key to dim_zone for pickup location"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zone')
+              field: zone_sk
+
+      - name: dropoff_zone_sk
+        description: "Foreign key to dim_zone for dropoff location"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zone')
+              field: zone_sk
+
+      - name: trip_distance
+        description: "Distance traveled in miles"
+        tests:
+          - not_null
+
+      - name: total_amount
+        description: "Total fare amount"
+        tests:
+          - not_null
+
+  - name: dim_date
+    description: "Date dimension table"
+    columns:
+      - name: date_sk
+        description: "Surrogate key for date"
+        tests:
+          - not_null
+          - unique
+
+      - name: date_actual
+        description: "Actual date value"
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_zone
+    description: "Taxi zone dimension table"
+    columns:
+      - name: zone_sk
+        description: "Surrogate key for zone"
+        tests:
+          - not_null
+          - unique
+
+      - name: locationid
+        description: "TLC Location ID"
+        tests:
+          - not_null
+
+  - name: dim_payment_type
+    description: "Payment type dimension"
+    columns:
+      - name: payment_type_id
+        description: "Payment type code"
+        tests:
+          - not_null
+          - unique
+
+  - name: dim_rate_code
+    description: "Rate code dimension"
+    columns:
+      - name: rate_code_id
+        description: "Rate code"
+        tests:
+          - not_null
+          - unique

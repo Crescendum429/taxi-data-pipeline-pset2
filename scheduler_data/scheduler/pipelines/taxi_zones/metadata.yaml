@@ -25,7 +25,7 @@ blocks:
   language: python
   name: exporter_taxi
   retry_config: null
-  status: updated
+  status: executed
   timeout: null
   type: data_exporter
   upstream_blocks:

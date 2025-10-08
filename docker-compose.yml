@@ -7,6 +7,7 @@ services:
       - "./scheduler_data:/home/src"
     ports:
       - "6789:6789"
+      - "8001:8001"
     command: /app/run_app.sh mage start scheduler
     environment:
       - MAGE_DATA_DIR=/home/src
